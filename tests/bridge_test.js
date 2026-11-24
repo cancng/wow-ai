@@ -12,8 +12,8 @@ test('luaStr escapes everything Lua 5.1 needs', () => {
   assert.equal(P.luaStr(42), '"42"');
 });
 
-test('parseFlags reads new-session, hello, forget, context, agent and allow lists', () => {
-  const none = { newSession: false, hello: false, forget: false, context: false, allow: [], agent: '' };
+test('parseFlags reads new-session, hello, forget, context, agent, model and allow lists', () => {
+  const none = { newSession: false, hello: false, forget: false, context: false, allow: [], agent: '', model: '' };
   assert.deepEqual(P.parseFlags(''), none);
   assert.deepEqual(P.parseFlags('n'), { ...none, newSession: true });
   assert.deepEqual(P.parseFlags('h'), { ...none, hello: true });
@@ -22,16 +22,30 @@ test('parseFlags reads new-session, hello, forget, context, agent and allow list
   assert.deepEqual(P.parseFlags('n;allow=WebSearch, Bash(git:*),'), { ...none, newSession: true, allow: ['WebSearch', 'Bash(git:*)'] });
   assert.deepEqual(P.parseFlags('agent=Codex'), { ...none, agent: 'codex' });
   assert.deepEqual(P.parseFlags('n;agent=grok;allow=WebSearch'), { ...none, newSession: true, agent: 'grok', allow: ['WebSearch'] });
+  // Model ids keep their case and punctuation.
+  assert.deepEqual(P.parseFlags('agent=claude;model=claude-opus-5-5[1m]'), { ...none, agent: 'claude', model: 'claude-opus-5-5[1m]' });
+  assert.deepEqual(P.parseFlags('model= sonnet '), { ...none, model: 'sonnet' });
+});
+
+test('normalizeModel takes model ids and refuses what could be read as an option', () => {
+  for (const ok of ['sonnet', 'claude-opus-5-5[1m]', 'gpt-5.1-codex', 'openrouter/vendor:model', 'Opus']) {
+    assert.equal(P.normalizeModel(ok), ok);
+  }
+  assert.equal(P.normalizeModel('  haiku '), 'haiku');
+  for (const bad of ['', '   ', '--dangerously-skip-permissions', '-m', 'two words', 'a;b', 'x'.repeat(65), 'm\x1Fx', 'model"x']) {
+    assert.equal(P.normalizeModel(bad), null, JSON.stringify(bad));
+  }
 });
 
 test('jobsFromStrip parses the current record format and keeps separators inside text', () => {
   const rec = ['sess', 'chat1', '12', 'realms', 'allow=WebSearch', 'My chat', 'hello\x1Fworld'].join('\x1F');
   const jobs = P.jobsFromStrip(12, rec);
   assert.equal(jobs.length, 1);
-  assert.deepEqual(jobs[0], { session: 'sess', chat: 'chat1', id: 12, cwd: 'realms', newSession: false, hello: false, forget: false, context: false, allow: ['WebSearch'], agent: '', name: 'My chat', text: 'hello\x1Fworld', via: 'pixel' });
-  // A chat that picked its own agent says so in the flags.
-  const codex = P.jobsFromStrip(13, ['sess', 'chat1', '13', '', 'agent=codex', 'My chat', 'hi'].join('\x1F'))[0];
+  assert.deepEqual(jobs[0], { session: 'sess', chat: 'chat1', id: 12, cwd: 'realms', newSession: false, hello: false, forget: false, context: false, allow: ['WebSearch'], agent: '', model: '', name: 'My chat', text: 'hello\x1Fworld', via: 'pixel' });
+  // A chat that picked its own agent and model says so in the flags.
+  const codex = P.jobsFromStrip(13, ['sess', 'chat1', '13', '', 'agent=codex;model=gpt-5.1-codex', 'My chat', 'hi'].join('\x1F'))[0];
   assert.equal(codex.agent, 'codex');
+  assert.equal(codex.model, 'gpt-5.1-codex');
   assert.equal(codex.text, 'hi');
 });
 
@@ -128,6 +142,9 @@ test('parseOutbox decodes the SavedVariables fallback', () => {
   const withAgent = src.replace('["newSession"]', '["agent"] = "codex",\n["newSession"]');
   assert.equal(P.parseOutbox(withAgent).agent, 'codex');
   assert.equal(P.parseOutbox(src).agent, undefined);
+  const withModel = src.replace('["newSession"]', '["model"] = "claude-opus-5-5[1m]",\n["newSession"]');
+  assert.equal(P.parseOutbox(withModel).model, 'claude-opus-5-5[1m]');
+  assert.equal(P.parseOutbox(src).model, undefined);
   assert.equal(P.parseOutbox('WoWAIDB = {}'), null);
   assert.equal(P.parseOutbox('["outbox"] = { ["text"] = "" }'), null);
 });

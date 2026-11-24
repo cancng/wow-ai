@@ -4,6 +4,10 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+### Added
+
+- A model per chat: `/wow-ai model sonnet` (or right-click the chat and pick **Model...**) runs that chat's agent with that model, as its CLI names it; `/wow-ai model default` goes back to the agent's own (`model` in `config.json`, else the CLI's default). The choice rides on each message as a `model=` flag in the strip record and as `model` in the reload outbox, so the bridge needs no restart, and it overrides `agents.<id>.model` for that run only. The session carries on across a model change. The window shows it next to the agent, a new chat inherits it, and changing the chat's agent clears it, since a model name belongs to one agent's CLI. Names are limited to letters, digits and `. _ : / [ ] -` and may not start with `-`, on both sides, because the bridge passes them as a command-line argument. An older bridge ignores the flag.
+
 ## [0.5.0] - 2026-11-04
 
 ### Added

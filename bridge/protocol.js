@@ -113,9 +113,10 @@ function sameFolder(a, b) {
 // session (no prompt), "allow=Rule1,Rule2" = add these permission rules before
 // running, "c" = the record carries a game-context field before the text (an
 // empty one clears the context the bridge keeps), "agent=codex" = run this
-// chat with that agent instead of the bridge's default (see agents.js).
+// chat with that agent instead of the bridge's default (see agents.js),
+// "model=sonnet" = pass that model to the agent instead of its configured one.
 function parseFlags(flags) {
-  const out = { newSession: false, hello: false, forget: false, context: false, allow: [], agent: '' };
+  const out = { newSession: false, hello: false, forget: false, context: false, allow: [], agent: '', model: '' };
   for (const tok of String(flags || '').split(';')) {
     if (tok === 'n') out.newSession = true;
     else if (tok === 'h') out.hello = true;
@@ -123,8 +124,19 @@ function parseFlags(flags) {
     else if (tok === 'c') out.context = true;
     else if (tok.startsWith('allow=')) out.allow.push(...tok.slice(6).split(',').map(s => s.trim()).filter(Boolean));
     else if (tok.startsWith('agent=')) out.agent = tok.slice(6).trim().toLowerCase();
+    else if (tok.startsWith('model=')) out.model = tok.slice(6).trim();
   }
   return out;
+}
+
+// A model name a chat asked for, or null when it can't be one. It ends up as a
+// command-line argument of the agent, so it may not start with "-" (it would be
+// read as an option) and is kept to the characters model ids use: "sonnet",
+// "claude-opus-5-5[1m]", "gpt-5.1-codex", "openrouter/some:model".
+function normalizeModel(name) {
+  const s = String(name || '').trim();
+  if (!s || s.length > 64 || !/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]*$/.test(s)) return null;
+  return s;
 }
 
 // Strip payload: records separated by \x1E, fields by \x1F:
@@ -169,6 +181,8 @@ function parseOutbox(src) {
   if (ctx) job.ctx = fromHex(ctx[1]);
   const agent = b.match(/\["agent"\]\s*=\s*"([0-9a-zA-Z_-]*)"/);
   if (agent && agent[1]) job.agent = agent[1].toLowerCase();
+  const model = b.match(/\["model"\]\s*=\s*"([0-9A-Za-z._:/[\]-]*)"/);
+  if (model && model[1]) job.model = model[1];
   const allow = b.match(/\["allow"\]\s*=\s*"([0-9a-fA-F]*)"/);
   if (allow && allow[1]) job.allow = fromHex(allow[1]).split('\x1F').filter(Boolean);
   return job;
@@ -549,7 +563,7 @@ module.exports = {
   fromHex, pad3, slotNumber, chatKey, sessKey,
   alreadyHandled, markHandled, pruneStale, MONTH_MS,
   resolveCwd, sameFolder, baseName,
-  parseFlags, jobsFromStrip, parseOutbox, systemPrompt, splitSummary,
+  parseFlags, normalizeModel, jobsFromStrip, parseOutbox, systemPrompt, splitSummary,
   ruleFor, describeToolUse,
   luaStr, luaTable, SILENT_WAV,
   MAP_LIMITS, validateMapCommand, newMap, applyMapCommands, extractMapBlocks, parseMapFile, luaMap,

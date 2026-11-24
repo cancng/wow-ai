@@ -455,6 +455,72 @@ test('a chat can pick its agent: the strip says so, replies are labelled by thei
   assert.equal(vm.evaluate('WoWAIDB.chats[2].agent'), 'codex');
 });
 
+test('a chat can pick its model: the strip and outbox carry it, odd names are refused, a new agent clears it', () => {
+  const vm = newVM();
+  login(vm);
+  vm.run('STUB.RunTimers()');
+  nextSlot(vm, '{ now = time(), cwd = "", agent = "claude", agents = { "claude", "codex", "grok" }, replies = {} }');
+  vm.run('STUB.now = STUB.now + 6; STUB.Tick()');
+  const texts = () => vm.evaluate('table.concat(STUB.texts, "|")');
+  const last = () => vm.evaluate('WoWAIDB.chats[1].history[#WoWAIDB.chats[1].history].text');
+  // No model of its own: no flag, nothing in the outbox, and "show" names the default.
+  vm.run('WoWAI.Send("hello")');
+  assert.equal(stripRecords(vm).find(r => r.text === 'hello').flags, '');
+  assert.equal(vm.evaluate('WoWAIDB.outbox.model'), null);
+  vm.run('SlashCmdList.WOWAI("cancel")');
+  vm.run('SlashCmdList.WOWAI("model")');
+  assert.ok(last().includes("model is Claude's default"));
+  // Pick one: it keeps its case and punctuation and rides on both transports and on a resend.
+  vm.run('SlashCmdList.WOWAI("model claude-opus-5-5[1m]")');
+  assert.equal(vm.evaluate('WoWAIDB.chats[1].model'), 'claude-opus-5-5[1m]');
+  assert.ok(last().includes('model set to claude-opus-5-5[1m] for Claude'));
+  vm.run('WoWAI.Send("with a model")');
+  assert.equal(stripRecords(vm).find(r => r.text === 'with a model').flags, 'model=claude-opus-5-5[1m]');
+  assert.equal(vm.evaluate('WoWAIDB.outbox.model'), 'claude-opus-5-5[1m]');
+  assert.ok(texts().includes('agent: Claude (bridge default) · claude-opus-5-5[1m]   mode: pixel'));
+  vm.run('WoWAI.Resend()');
+  assert.equal(stripRecords(vm).find(r => r.text === 'with a model').flags, 'model=claude-opus-5-5[1m]');
+  vm.run('SlashCmdList.WOWAI("cancel")');
+  // Next to an agent the flags are joined; the order matches Send.
+  vm.run('SlashCmdList.WOWAI("model sonnet")');
+  vm.run('WoWAIDB.chats[1].agent = "claude"');
+  vm.run('WoWAI.Send("both")');
+  assert.equal(stripRecords(vm).find(r => r.text === 'both').flags, 'agent=claude;model=sonnet');
+  vm.run('WoWAI.Resend()');
+  assert.equal(stripRecords(vm).find(r => r.text === 'both').flags, 'agent=claude;model=sonnet');
+  vm.run('SlashCmdList.WOWAI("cancel")');
+  // Something that could be read as a command-line option is refused, the model stays.
+  vm.run('WoWAI.SetModel("--dangerously-skip-permissions")');
+  assert.equal(vm.evaluate('WoWAIDB.chats[1].model'), 'sonnet');
+  assert.ok(last().includes('is not a model name'));
+  // More than one word is a message, not the command.
+  vm.run('SlashCmdList.WOWAI("model this is a question")');
+  assert.equal(vm.evaluate('WoWAIDB.chats[1].model'), 'sonnet');
+  assert.ok(stripRecords(vm).find(r => r.text === 'model this is a question'));
+  vm.run('SlashCmdList.WOWAI("cancel")');
+  // A new chat inherits it, like the agent and the folder.
+  vm.run('WoWAI.NewChat("Second")');
+  assert.equal(vm.evaluate('WoWAIDB.chats[2].model'), 'sonnet');
+  vm.run(`WoWAI.SwitchChat(WoWAIDB.chats[1].id)`);
+  // The Model... menu item opens a prompt prefilled with the chat's model.
+  vm.run('WoWAI.ModelPrompt()');
+  assert.equal(vm.evaluate('STUB.popup.which'), 'WOWAI_MODEL');
+  assert.equal(vm.evaluate('STUB.popup.data.model'), 'sonnet');
+  vm.run(`
+    local dialog = { editBox = { GetText = function() return " haiku " end } }
+    StaticPopupDialogs.WOWAI_MODEL.OnAccept(dialog, STUB.popup.data)`);
+  assert.equal(vm.evaluate('WoWAIDB.chats[1].model'), 'haiku');
+  // Changing agent clears it: a model name belongs to one agent's CLI.
+  vm.run('SlashCmdList.WOWAI("agent codex")');
+  assert.equal(vm.evaluate('WoWAIDB.chats[1].model'), '');
+  assert.ok(last().includes('model haiku cleared'));
+  // "default" goes back to the agent's own.
+  vm.run('SlashCmdList.WOWAI("model gpt-5.1-codex")');
+  vm.run('SlashCmdList.WOWAI("model default")');
+  assert.equal(vm.evaluate('WoWAIDB.chats[1].model'), '');
+  assert.ok(last().includes("model reset to Codex's default"));
+});
+
 test('replies saved under the old "claude" role are read as assistant replies from Claude', () => {
   const vm = newVM();
   vm.run('WoWAIDB = { chats = { { id = "c1", name = "Old", cwd = "", history = { { role = "user", text = "q", id = 1, t = 1 }, { role = "claude", text = "a", id = 1, t = 2 } }, unread = 0, created = 1 } }, activeChat = "c1", settings = {} }');

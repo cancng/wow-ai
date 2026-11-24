@@ -176,6 +176,7 @@ local function AddChat(name, cwd)
 		name = name or ("Chat " .. (#db.chats + 1)),
 		cwd = cwd or (current and current.cwd) or DEFAULT_CWD,
 		agent = (current and current.agent) or "",
+		model = (current and current.model) or "",
 		history = {},
 		unread = 0,
 		created = time(),
@@ -242,6 +243,7 @@ local function InitDB()
 	-- Chats from before agents had names: replies were stored with role "claude".
 	for _, c in ipairs(db.chats) do
 		c.agent = c.agent or ""
+		c.model = c.model or ""
 		for _, m in ipairs(c.history or {}) do
 			if m.role == "claude" then m.role, m.agent = "assistant", m.agent or "claude" end
 		end
@@ -1231,6 +1233,7 @@ function WoWAI.Send(text, allow)
 	local tokens = {}
 	if c.resetNext then table.insert(tokens, "n") end
 	if c.agent and c.agent ~= "" then table.insert(tokens, "agent=" .. c.agent) end
+	if c.model and c.model ~= "" then table.insert(tokens, "model=" .. c.model) end
 	local allowHex
 	if type(allow) == "table" and #allow > 0 then
 		table.insert(tokens, "allow=" .. table.concat(allow, ","))
@@ -1247,6 +1250,7 @@ function WoWAI.Send(text, allow)
 		cwd = ToHex(c.cwd),
 		ctx = ctx and ToHex(ctx) or nil,
 		agent = (c.agent and c.agent ~= "") and c.agent or nil,
+		model = (c.model and c.model ~= "") and c.model or nil,
 		allow = allowHex,
 		newSession = newSession,
 		t = time(),
@@ -1341,7 +1345,10 @@ function WoWAI.Resend()
 		end
 	end
 	if not text then return end
-	run.outbound[c.pendingId] = { chat = c.id, cwd = c.cwd, flags = (c.agent and c.agent ~= "") and ("agent=" .. c.agent) or "", name = c.name, text = text, sentAt = GetTime() }
+	local tokens = {}
+	if c.agent and c.agent ~= "" then table.insert(tokens, "agent=" .. c.agent) end
+	if c.model and c.model ~= "" then table.insert(tokens, "model=" .. c.model) end
+	run.outbound[c.pendingId] = { chat = c.id, cwd = c.cwd, flags = table.concat(tokens, ";"), name = c.name, text = text, sentAt = GetTime() }
 	run.sentAt = GetTime()
 	run.polls = 0
 	ScheduleNextPoll()
@@ -1483,10 +1490,16 @@ function WoWAI.SetAgent(rest, c)
 	end
 	local changed = rest ~= (c.agent or "")
 	c.agent = rest
+	-- A model name belongs to one agent's CLI ("sonnet" means nothing to Codex).
+	local modelNote = ""
+	if changed and c.model and c.model ~= "" then
+		modelNote = "; model " .. c.model .. " cleared, the new agent uses its own default"
+		c.model = ""
+	end
 	if rest ~= "" then
-		AddHistory(c, "system", "agent set to " .. AgentName(rest) .. (changed and #c.history > 1 and "; the next message starts a fresh session with it" or ""))
+		AddHistory(c, "system", "agent set to " .. AgentName(rest) .. (changed and #c.history > 1 and "; the next message starts a fresh session with it" or "") .. modelNote)
 	elseif changed then
-		AddHistory(c, "system", "agent reset to the bridge's default: " .. (run.bridgeAgent and AgentName(run.bridgeAgent) or "unknown until connected"))
+		AddHistory(c, "system", "agent reset to the bridge's default: " .. (run.bridgeAgent and AgentName(run.bridgeAgent) or "unknown until connected") .. modelNote)
 	else
 		AddHistory(c, "system", "agent is the bridge's default: " .. (run.bridgeAgent and AgentName(run.bridgeAgent) or "unknown until connected") .. " (/wow-ai agent <name>, or right-click the chat and pick Agent, to change; agents: " .. AgentList() .. ")")
 	end
@@ -1531,6 +1544,80 @@ function WoWAI.AgentPrompt(id)
 	local c = (id and FindChat(id)) or ActiveChat()
 	if not c then return end
 	StaticPopup_Show("WOWAI_AGENT", AgentList(), run.bridgeAgent and AgentName(run.bridgeAgent) or "unknown until connected", { id = c.id, agent = c.agent or "" })
+end
+
+-- The model this chat's agent runs, as the agent's CLI names it ("sonnet",
+-- "opus", "gpt-5.1-codex"). Empty (or "-" / "default") = whatever the bridge's
+-- config.json or the CLI itself picks. It rides on each message as a "model="
+-- flag; the session carries on, the agents resume with any model. The name is
+-- passed to the CLI as an argument, so it is kept to the characters model ids use.
+local MODEL_MAX = 64
+
+local function ValidModel(name)
+	return #name <= MODEL_MAX and name:match("^[%w][%w%._:/%[%]%-]*$") ~= nil
+end
+
+function WoWAI.SetModel(rest, c)
+	c = c or ActiveChat()
+	if not c then return end
+	rest = Trim(rest or "")
+	if rest == "-" or rest:lower() == "default" then rest = "" end
+	local who = ChatAgentName(c)
+	if rest ~= "" and not ValidModel(rest) then
+		AddHistory(c, "system", "\"" .. rest .. "\" is not a model name (letters, digits and . _ : / [ ] -, up to " .. MODEL_MAX .. " characters)")
+		WoWAI.Render()
+		return
+	end
+	local changed = rest ~= (c.model or "")
+	c.model = rest
+	if rest ~= "" then
+		AddHistory(c, "system", "model set to " .. rest .. " for " .. who .. (changed and #c.history > 1 and "; the conversation carries on with it" or ""))
+	elseif changed then
+		AddHistory(c, "system", "model reset to " .. who .. "'s default")
+	else
+		AddHistory(c, "system", "model is " .. who .. "'s default (the bridge's config.json, else the CLI's own). /wow-ai model <name>, or right-click the chat and pick Model, to change; e.g. sonnet, opus, haiku for Claude")
+	end
+	WoWAI.Render()
+end
+
+StaticPopupDialogs["WOWAI_MODEL"] = {
+	text = "Model for this chat (%s)\n\nAs the agent's CLI names it, e.g. sonnet, opus, haiku for Claude.\nEmpty = the agent's default. The conversation carries on.",
+	button1 = OKAY,
+	button2 = CANCEL,
+	hasEditBox = 1,
+	editBoxWidth = 240,
+	maxLetters = MODEL_MAX,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	OnShow = function(dialog, data)
+		local box = dialog.GetEditBox and dialog:GetEditBox() or dialog.editBox
+		if box then
+			box:SetText(data and data.model or "")
+			box:HighlightText()
+			box:SetFocus()
+		end
+	end,
+	OnAccept = function(dialog, data)
+		local box = dialog.GetEditBox and dialog:GetEditBox() or dialog.editBox
+		local chat = data and FindChat(data.id)
+		if chat and box then WoWAI.SetModel(box:GetText(), chat) end
+	end,
+	EditBoxOnEnterPressed = function(box)
+		local dialog = box:GetParent()
+		StaticPopupDialogs["WOWAI_MODEL"].OnAccept(dialog, dialog.data)
+		dialog:Hide()
+	end,
+	EditBoxOnEscapePressed = function(box)
+		box:GetParent():Hide()
+	end,
+}
+
+-- Model dialog for a chat (the active one when no id is given).
+function WoWAI.ModelPrompt(id)
+	local c = (id and FindChat(id)) or ActiveChat()
+	if not c then return end
+	StaticPopup_Show("WOWAI_MODEL", ChatAgentName(c), nil, { id = c.id, model = c.model or "" })
 end
 
 StaticPopupDialogs["WOWAI_RENAME"] = {
@@ -1833,6 +1920,7 @@ function WoWAI.UpdateStatus()
 		local folder = FolderName(ChatFolder(c))
 		if folder ~= "" then t = t .. "  |cff888888" .. Display(folder) .. "|r" end
 		if c and c.agent and c.agent ~= "" then t = t .. "  |cff888888" .. AgentName(c.agent) .. "|r" end
+		if c and c.model and c.model ~= "" then t = t .. "  |cff888888" .. Display(c.model) .. "|r" end
 		ui.title:SetText(t)
 	end
 	local cwdText
@@ -1851,6 +1939,7 @@ function WoWAI.UpdateStatus()
 	else
 		agentText = "(bridge default)"
 	end
+	if c and c.model and c.model ~= "" then agentText = agentText .. " · " .. Display(c.model) end
 	ui.cwd:SetText("cwd: " .. cwdText .. "   agent: " .. agentText .. "   mode: " .. mode)
 	if ui.resend then ui.resend:SetShown(c and c.pendingId ~= nil and mode == "pixel") end
 	if ui.refresh then ui.refresh:SetShown(mode ~= "pixel" or run.slotsExhausted or run.slotsMissing or run.pixelFailed or false) end
@@ -2435,11 +2524,11 @@ local function BuildUI()
 	local newBtn = MakeButton(panel, "+ New chat", PANEL_W - 16, function() WoWAI.NewChat() end)
 	newBtn:SetPoint("TOP", panel, "TOP", 0, -8)
 
-	-- Per-chat menu: Rename, Folder and Agent, opened by right-clicking a chat
-	-- row. A plain frame of our own rather than a Blizzard dropdown, so it looks
-	-- the same on every client.
+	-- Per-chat menu: Rename, Folder, Agent and Model, opened by right-clicking a
+	-- chat row. A plain frame of our own rather than a Blizzard dropdown, so it
+	-- looks the same on every client.
 	local menu = CreateFrame("Frame", "WoWAIChatMenu", f, "BackdropTemplate")
-	menu:SetSize(110, 4 * 20 + 12)
+	menu:SetSize(110, 5 * 20 + 12)
 	menu:SetFrameStrata("TOOLTIP")
 	menu:SetBackdrop({
 		bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
@@ -2474,6 +2563,7 @@ local function BuildUI()
 	MenuItem("Rename...", 1, WoWAI.RenamePrompt)
 	MenuItem("Folder...", 2, WoWAI.FolderPrompt)
 	MenuItem("Agent...", 3, WoWAI.AgentPrompt)
+	MenuItem("Model...", 4, WoWAI.ModelPrompt)
 	-- Close once the mouse has wandered away from the menu and the row it came from.
 	menu:SetScript("OnUpdate", function(self, dt)
 		if not MouseIsOver then return end
@@ -2820,6 +2910,7 @@ local HELP = table.concat({
 	"/wow-ai delete                 delete the current chat",
 	"/wow-ai cd <folder>            folder this chat's agent works in (relative to the bridge's folder; no folder = back to default). Right-clicking the chat in the left panel and picking Folder does the same",
 	"/wow-ai agent [name]           which agent this chat talks to (no name = show; default = the bridge's). Right-clicking the chat and picking Agent does the same",
+	"/wow-ai model [name]           which model this chat's agent runs, as its CLI names it, e.g. sonnet or opus (no name = show; default = the agent's own). The conversation carries on. Right-clicking the chat and picking Model does the same",
 	"/wow-ai reset                  next message in this chat starts a fresh agent session",
 	"/wow-ai context [on|off]       what the agent is told about your character and where you are (no argument = show it)",
 	"/wow-ai map [...]              map layers the agent drew, the route navigator and herb/ore nodes (no argument = status and subcommands; /aimap is the same)",
@@ -2862,7 +2953,7 @@ local COMMAND_ARGS = {
 	signal = { [""] = true, on = true, off = true }, longchat = { [""] = true, on = true, off = true },
 	auto = OnOffOrNumber,
 	echo = function(rest) return rest == "" or rest == "summary" or rest == "full" or rest == "short" or rest == "off" or tonumber(rest) ~= nil end,
-	bind = 1, agent = 1,
+	bind = 1, agent = 1, model = 1,
 	chat = ChatArgument, chats = ChatArgument,
 	cd = true, new = true, rename = true,
 	map = true, -- /wow-ai map ...: Map.lua (layers, navigator, herb/ore nodes)
@@ -2945,6 +3036,9 @@ SlashCmdList["WOWAI"] = function(msg)
 		if WoWAIMap then WoWAIMap.Command(rest) else print("|cff66ccff[WoW AI]|r the map module did not load") end
 	elseif cmd == "agent" then
 		WoWAI.SetAgent(rest, c)
+		WoWAI.Toggle(true)
+	elseif cmd == "model" then
+		WoWAI.SetModel(rest, c)
 		WoWAI.Toggle(true)
 	elseif cmd == "reset" then
 		c.resetNext = true

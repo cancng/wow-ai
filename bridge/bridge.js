@@ -521,6 +521,18 @@ function runJob(job) {
   job.agent = agentId;
   const agent = A.AGENTS[agentId];
   const acfg = A.agentConfig(cfg, agentId);
+  // The chat's own model (a "model=" flag) wins over the one in config.json. A
+  // session carries on across a model change: the agents resume with any model.
+  if (job.model) {
+    const model = P.normalizeModel(job.model);
+    if (!model) {
+      log(`${tag} refused model "${job.model}"`);
+      finish(job, 'error', `"${job.model}" is not a model name the bridge will pass on (letters, digits and . _ : / [ ] -, not starting with -).\n` +
+        `Use /wow-ai model <name> to pick another, or /wow-ai model default for ${agent.name}'s own.`);
+      return;
+    }
+    acfg.model = model;
+  }
   const cmd = A.resolveCommand(agentId, acfg);
   if (!cmd.found) {
     log(`${tag} ${agentId} not found: ${cmd.note}`);
@@ -570,7 +582,7 @@ function runJob(job) {
     env.WOW_AI_MAP_FILE = mapFileFor(job);
   } catch (e) { log(`${tag} map file unavailable: ${e.message}`); }
 
-  log(`${tag} (${job.via}) ${agent.name} starting in ${cwd}${resume ? ' (resume ' + resume.slice(0, 8) + ')' : ' (new session)'}${ctx ? ' [game context]' : ''}${running.size ? ' [' + (running.size + 1) + ' running]' : ''}`);
+  log(`${tag} (${job.via}) ${agent.name}${acfg.model ? ' (' + acfg.model + ')' : ''} starting in ${cwd}${resume ? ' (resume ' + resume.slice(0, 8) + ')' : ' (new session)'}${ctx ? ' [game context]' : ''}${running.size ? ' [' + (running.size + 1) + ' running]' : ''}`);
   const child = spawn(cmd.file, args, { cwd, env, windowsHide: true, stdio: [input.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
   running.set(key, { job, child });
   publish(key, { chat: job.chat, id: job.id, status: 'working', text: resume ? 'thinking...' : 'starting a new session...', cwd, session: resume, agent: agentId }, true);
