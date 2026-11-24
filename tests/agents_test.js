@@ -145,8 +145,9 @@ test('Grok: streaming-json from a prompt file, dontAsk plus translated allow rul
 
 test('Claude stream: tool calls and text become progress, the result carries the reply and any denials', () => {
   const p = A.claudeParser();
-  let r = p.feed({ type: 'system', subtype: 'init', session_id: 'sess-1' });
+  let r = p.feed({ type: 'system', subtype: 'init', session_id: 'sess-1', model: 'claude-opus-5-5' });
   assert.equal(r.session, 'sess-1');
+  assert.equal(r.model, 'claude-opus-5-5', 'the init event names the model the run really uses');
   r = p.feed({ type: 'assistant', session_id: 'sess-1', message: { content: [{ type: 'text', text: 'Let me look.' }, { type: 'tool_use', name: 'Edit', input: { file_path: 'player.gd' } }] } });
   assert.deepEqual(r.progress, ['Let me look.', 'edit player.gd']);
   assert.equal(r.done, undefined);

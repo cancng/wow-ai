@@ -533,6 +533,9 @@ function runJob(job) {
     }
     acfg.model = model;
   }
+  // What the game shows as this chat's model: the one asked for until the agent
+  // names the one it really runs (only parsers that can tell set r.model).
+  job.modelUsed = acfg.model || '';
   const cmd = A.resolveCommand(agentId, acfg);
   if (!cmd.found) {
     log(`${tag} ${agentId} not found: ${cmd.note}`);
@@ -585,7 +588,7 @@ function runJob(job) {
   log(`${tag} (${job.via}) ${agent.name}${acfg.model ? ' (' + acfg.model + ')' : ''} starting in ${cwd}${resume ? ' (resume ' + resume.slice(0, 8) + ')' : ' (new session)'}${ctx ? ' [game context]' : ''}${running.size ? ' [' + (running.size + 1) + ' running]' : ''}`);
   const child = spawn(cmd.file, args, { cwd, env, windowsHide: true, stdio: [input.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
   running.set(key, { job, child });
-  publish(key, { chat: job.chat, id: job.id, status: 'working', text: resume ? 'thinking...' : 'starting a new session...', cwd, session: resume, agent: agentId }, true);
+  publish(key, { chat: job.chat, id: job.id, status: 'working', text: resume ? 'thinking...' : 'starting a new session...', cwd, session: resume, agent: agentId, model: job.modelUsed }, true);
   if (input.stdin !== undefined) { child.stdin.on('error', () => {}); child.stdin.end(input.stdin); }
 
   const parser = agent.parser();
@@ -603,7 +606,7 @@ function runJob(job) {
     progress.push(line);
     while (progress.length > 10) progress.shift();
     beat(job);
-    publish(key, { chat: job.chat, id: job.id, status: 'working', text: progress.join('\n'), cwd, session: sessionId, agent: agentId }, false);
+    publish(key, { chat: job.chat, id: job.id, status: 'working', text: progress.join('\n'), cwd, session: sessionId, agent: agentId, model: job.modelUsed }, false);
   };
   if (agent.stream === 'text') pushProgress(`${agent.name} is working (no live progress)`);
   if (input.note) notes.push(input.note);
@@ -630,6 +633,7 @@ function runJob(job) {
       return;
     }
     if (r.session) sessionId = r.session;
+    if (typeof r.model === 'string' && r.model) job.modelUsed = r.model;
     for (const p of r.progress) pushProgress(p);
     for (const d of r.denied) denied.add(d);
     notes.push(...r.notes);
@@ -721,7 +725,7 @@ function finish(job, status, text, session, denied) {
     summary = P.stripMacroBlocks(summary);
   }
   noteMessage(job, status === 'done' ? 'assistant' : 'system', status === 'done' ? text : 'Bridge error: ' + text);
-  publish(chatKey(job), { chat: job.chat, id: job.id, status, text, summary, cwd: job.cwd, session, denied, macros, agent: job.agent || '' }, true);
+  publish(chatKey(job), { chat: job.chat, id: job.id, status, text, summary, cwd: job.cwd, session, denied, macros, agent: job.agent || '', model: job.modelUsed || '' }, true);
   signal('sig', job.id, true);
   log(`#${job.id}${job.session ? '@' + job.session : ''} ${status} (${text.length} chars${summary ? ', summary ' + summary.length : ', no summary'})`);
   drainQueue();

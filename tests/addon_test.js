@@ -424,7 +424,7 @@ test('a chat can pick its agent: the strip says so, replies are labelled by thei
   rec = stripRecords(vm).find(r => r.text === 'now with codex');
   assert.equal(rec.flags, 'agent=codex');
   assert.equal(vm.evaluate('WoWAIDB.outbox.agent'), 'codex');
-  assert.ok(texts().includes('agent: Codex   mode: pixel'));
+  assert.ok(texts().includes('agent: Codex   model: default   mode: pixel'));
   const id2 = vm.num('WoWAIDB.chats[1].pendingId');
   nextSlot(vm, slot(`{ chat = "${chatId}", id = ${id2}, status = "done", text = "codex here", agent = "codex" }`));
   vm.run('STUB.now = STUB.now + 6; STUB.Tick()');
@@ -463,13 +463,20 @@ test('a chat can pick its model: the strip and outbox carry it, odd names are re
   vm.run('STUB.now = STUB.now + 6; STUB.Tick()');
   const texts = () => vm.evaluate('table.concat(STUB.texts, "|")');
   const last = () => vm.evaluate('WoWAIDB.chats[1].history[#WoWAIDB.chats[1].history].text');
-  // No model of its own: no flag, nothing in the outbox, and "show" names the default.
+  // No model of its own: no flag, nothing in the outbox, and the window says "default"...
+  assert.ok(texts().includes('model: default   mode: pixel'));
   vm.run('WoWAI.Send("hello")');
   assert.equal(stripRecords(vm).find(r => r.text === 'hello').flags, '');
   assert.equal(vm.evaluate('WoWAIDB.outbox.model'), null);
-  vm.run('SlashCmdList.WOWAI("cancel")');
+  // ...until a reply names the model the agent really ran.
+  const chatId = vm.evaluate('WoWAIDB.chats[1].id');
+  const id = vm.num('WoWAIDB.chats[1].pendingId');
+  nextSlot(vm, `{ now = time(), cwd = "", agent = "claude", agents = { "claude", "codex", "grok" }, replies = { { chat = "${chatId}", id = ${id}, status = "done", text = "hi", agent = "claude", model = "claude-opus-5-5" } } }`);
+  vm.run('STUB.now = STUB.now + 6; STUB.Tick()');
+  assert.equal(vm.evaluate('WoWAIDB.chats[1].lastModel'), 'claude-opus-5-5');
+  assert.ok(texts().includes('model: claude-opus-5-5 (default)   mode: pixel'));
   vm.run('SlashCmdList.WOWAI("model")');
-  assert.ok(last().includes("model is Claude's default"));
+  assert.ok(last().includes("model is Claude's default, last reply ran on claude-opus-5-5"));
   // Pick one: it keeps its case and punctuation and rides on both transports and on a resend.
   vm.run('SlashCmdList.WOWAI("model claude-opus-5-5[1m]")');
   assert.equal(vm.evaluate('WoWAIDB.chats[1].model'), 'claude-opus-5-5[1m]');
@@ -477,7 +484,9 @@ test('a chat can pick its model: the strip and outbox carry it, odd names are re
   vm.run('WoWAI.Send("with a model")');
   assert.equal(stripRecords(vm).find(r => r.text === 'with a model').flags, 'model=claude-opus-5-5[1m]');
   assert.equal(vm.evaluate('WoWAIDB.outbox.model'), 'claude-opus-5-5[1m]');
-  assert.ok(texts().includes('agent: Claude (bridge default) · claude-opus-5-5[1m]   mode: pixel'));
+  assert.ok(texts().includes('agent: Claude (bridge default)   model: claude-opus-5-5[1m]   mode: pixel'));
+  // The model reported for the old choice is dropped, not shown as the new default later.
+  assert.equal(vm.evaluate('WoWAIDB.chats[1].lastModel'), null);
   vm.run('WoWAI.Resend()');
   assert.equal(stripRecords(vm).find(r => r.text === 'with a model').flags, 'model=claude-opus-5-5[1m]');
   vm.run('SlashCmdList.WOWAI("cancel")');

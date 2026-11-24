@@ -710,6 +710,8 @@ local function ApplyReplies(replies)
 		if c and c.pendingId and r.id == c.pendingId then
 			matched = true
 			MarkAcked(r.id)
+			-- The model the agent says it runs (a bridge that can't tell, or an older one, sends none).
+			if type(r.model) == "string" and r.model ~= "" then c.lastModel = r.model end
 			local denied = type(r.denied) == "table" and #r.denied > 0 and r.denied or nil
 			if r.status == "done" then
 				Finish(c, "assistant", r.text or "", denied, r.agent, r.summary, WoWAI.CleanMacros(r.macros))
@@ -1496,6 +1498,7 @@ function WoWAI.SetAgent(rest, c)
 		modelNote = "; model " .. c.model .. " cleared, the new agent uses its own default"
 		c.model = ""
 	end
+	if changed then c.lastModel = nil end
 	if rest ~= "" then
 		AddHistory(c, "system", "agent set to " .. AgentName(rest) .. (changed and #c.history > 1 and "; the next message starts a fresh session with it" or "") .. modelNote)
 	elseif changed then
@@ -1570,12 +1573,14 @@ function WoWAI.SetModel(rest, c)
 	end
 	local changed = rest ~= (c.model or "")
 	c.model = rest
+	-- The model last reported belongs to the old choice; the next reply says the new one.
+	if changed then c.lastModel = nil end
 	if rest ~= "" then
 		AddHistory(c, "system", "model set to " .. rest .. " for " .. who .. (changed and #c.history > 1 and "; the conversation carries on with it" or ""))
 	elseif changed then
 		AddHistory(c, "system", "model reset to " .. who .. "'s default")
 	else
-		AddHistory(c, "system", "model is " .. who .. "'s default (the bridge's config.json, else the CLI's own). /wow-ai model <name>, or right-click the chat and pick Model, to change; e.g. sonnet, opus, haiku for Claude")
+		AddHistory(c, "system", "model is " .. who .. "'s default" .. (c.lastModel and (", last reply ran on " .. c.lastModel) or " (the bridge's config.json, else the CLI's own)") .. ". /wow-ai model <name>, or right-click the chat and pick Model, to change; e.g. sonnet, opus, haiku for Claude")
 	end
 	WoWAI.Render()
 end
@@ -1939,8 +1944,16 @@ function WoWAI.UpdateStatus()
 	else
 		agentText = "(bridge default)"
 	end
-	if c and c.model and c.model ~= "" then agentText = agentText .. " · " .. Display(c.model) end
-	ui.cwd:SetText("cwd: " .. cwdText .. "   agent: " .. agentText .. "   mode: " .. mode)
+	-- The chat's own model, else the one the agent last said it runs, else unknown yet.
+	local modelText
+	if c and c.model and c.model ~= "" then
+		modelText = Display(c.model)
+	elseif c and c.lastModel then
+		modelText = Display(c.lastModel) .. " (default)"
+	else
+		modelText = "default"
+	end
+	ui.cwd:SetText("cwd: " .. cwdText .. "   agent: " .. agentText .. "   model: " .. modelText .. "   mode: " .. mode)
 	if ui.resend then ui.resend:SetShown(c and c.pendingId ~= nil and mode == "pixel") end
 	if ui.refresh then ui.refresh:SetShown(mode ~= "pixel" or run.slotsExhausted or run.slotsMissing or run.pixelFailed or false) end
 	WoWAI.UpdateMini()

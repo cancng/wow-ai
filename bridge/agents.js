@@ -65,6 +65,9 @@ function claudeParser() {
     feed(ev) {
       const out = empty();
       if (ev.session_id) out.session = ev.session_id;
+      // The init event names the model this run really uses (an alias like
+      // "sonnet" resolved, or the CLI's own default), so the game can show it.
+      if (ev.type === 'system' && ev.subtype === 'init' && typeof ev.model === 'string' && ev.model) out.model = ev.model;
       if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
         for (const block of ev.message.content) {
           if (block.type === 'tool_use') out.progress.push(describeToolUse(block));

@@ -339,6 +339,7 @@ function luaTable(globalName, records, opts = {}) {
     lines.push(`\t\t\tcwd = ${luaStr(r.cwd || '')},`);
     lines.push(`\t\t\tsession = ${luaStr(r.session || '')},`);
     lines.push(`\t\t\tagent = ${luaStr(r.agent || '')},`);
+    if (r.model) lines.push(`\t\t\tmodel = ${luaStr(r.model)},`);
     if (r.summary) lines.push(`\t\t\tsummary = ${luaStr(r.summary)},`);
     if (Array.isArray(r.denied) && r.denied.length) {
       lines.push(`\t\t\tdenied = { ${r.denied.map(luaStr).join(', ')} },`);

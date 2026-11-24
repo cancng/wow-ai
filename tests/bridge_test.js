@@ -110,6 +110,9 @@ test('splitSummary takes the last TL;DR block for the game chat and keeps the wh
   const lua = P.luaTable('WoWAI_SlotData', [{ chat: 'c', id: 1, status: 'done', text: 'body\nTL;DR: short', summary: 'short' }, { chat: 'c', id: 2, status: 'done', text: 'plain' }]);
   assert.ok(lua.includes('summary = "short"'));
   assert.equal((lua.match(/summary = /g) || []).length, 1);
+  // Likewise the model the agent reported.
+  assert.ok(!lua.includes('model ='));
+  assert.ok(P.luaTable('X', [{ chat: 'c', id: 1, status: 'done', text: 't', model: 'claude-opus-5-5' }]).includes('model = "claude-opus-5-5"'));
 });
 
 test('the shipped primer exists, mentions the essentials, and stays small enough to send on every run', () => {
